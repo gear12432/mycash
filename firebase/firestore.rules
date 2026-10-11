@@ -1,0 +1,125 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Helpers
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'userId', 'firstName', 'lastName', 'email'])
+        && data.uid is string && data.uid == request.auth.uid
+        && data.userId is string && data.userId.size() <= 10
+        && data.firstName is string && data.firstName.size() <= 50
+        && data.lastName is string && data.lastName.size() <= 50
+        && data.email is string && data.email.size() <= 100;
+    }
+
+    function isValidUserPrivate(data) {
+      return data.address is string && data.address.size() <= 200
+        && data.state is string && data.state.size() <= 50
+        && data.district is string && data.district.size() <= 50
+        && data.pinCode is string && data.pinCode.size() <= 10;
+    }
+
+    function isValidKyc(data) {
+      return data.uid is string && data.uid == request.auth.uid;
+    }
+
+    function isValidWallet(data) {
+      return data.uid is string && data.uid == request.auth.uid
+        && data.coinBalance is number && data.coinBalance >= 0;
+    }
+
+    function isValidTransaction(data) {
+      return data.coinAmount is number && data.coinAmount > 0
+        && (data.senderUid == request.auth.uid || data.recipientUid == request.auth.uid);
+    }
+
+    function isValidPaymentOrder(data) {
+      return data.uid is string && data.uid == request.auth.uid
+        && data.amount is number && data.amount > 0;
+    }
+
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().userId == existing().userId;
+      allow delete: if false;
+    }
+
+    // UserPrivate Collection (PII)
+    match /userPrivate/{userId} {
+      allow get, list: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidUserPrivate(incoming());
+      allow delete: if false;
+    }
+
+    // Public User ID Mappings (PLxxxxx)
+    match /userIds/{publicUserId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && incoming().uid == request.auth.uid;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // KYC Records
+    match /kycRecords/{userId} {
+      allow get, list: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidKyc(incoming());
+      allow delete: if false;
+    }
+
+    // Wallets
+    match /wallets/{userId} {
+      allow get, list: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidWallet(incoming());
+      allow update: if isOwner(userId) && isValidWallet(incoming())
+        && incoming().uid == existing().uid;
+      allow delete: if false;
+    }
+
+    // Transactions
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update, delete: if false;
+    }
+
+    // Payment Orders
+    match /paymentOrders/{paymentOrderId} {
+      allow get, list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && isValidPaymentOrder(incoming());
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if false;
+    }
+  }
+}
